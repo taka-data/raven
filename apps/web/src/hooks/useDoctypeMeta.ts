@@ -14,6 +14,8 @@ export type DocFieldMeta = {
 export type WorkflowMeta = {
     name: string
     workflow_state_field?: string
+    /** doc_status is "0" draft, "1" submitted, "2" cancelled. */
+    states?: { state: string; doc_status: string | number }[]
 }
 
 export type DoctypeMeta = {

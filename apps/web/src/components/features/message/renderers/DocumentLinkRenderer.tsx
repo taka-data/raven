@@ -1,13 +1,12 @@
 import { siteOrigin, siteUrl } from "@lib/site"
-import { Fragment, useContext, useMemo, useState } from "react"
+import { Fragment, useMemo, useState } from "react"
 import parse from "html-react-parser"
 import dayjs from "dayjs"
 import customParseFormat from "dayjs/plugin/customParseFormat"
-import { FrappeContext, useFrappeGetCall, type FrappeConfig } from "frappe-react-sdk"
+import { useFrappeGetCall } from "frappe-react-sdk"
 import { toast } from "sonner"
 import {
     ArrowDownIcon,
-    ArrowRightIcon,
     ArrowUpIcon,
     CheckIcon,
     FileBoxIcon,
@@ -16,20 +15,12 @@ import {
     ExternalLinkIcon,
     MinusIcon,
     PrinterIcon,
-    WorkflowIcon,
 } from "lucide-react"
 import { cn } from "@lib/utils"
 import { Badge } from "@components/ui/badge"
 import { Button } from "@components/ui/button"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@components/ui/dropdown-menu"
 import { Skeleton } from "@components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@components/ui/tooltip"
-import { errorResponseToast } from "@components/ui/error-banner"
 import { useHasBeenInView } from "@hooks/useHasBeenInView"
 import {
     fieldByLabel,
@@ -43,6 +34,7 @@ import { UserAvatar } from "@components/features/message/UserAvatar"
 import { slug } from "@lib/frappe"
 import { USER_DATE_FORMAT } from "@lib/date"
 import { DocumentPrintDialog } from "./DocumentPrintDialog"
+import { DocumentWorkflowActions } from "./DocumentWorkflowActions"
 import _ from "@lib/translate"
 import { Separator } from "@components/ui/separator"
 
@@ -400,8 +392,8 @@ const DocumentCard = ({
                         <ServerHtml html={String(preview.preview_title ?? docname)} />
                     </a>
                 </div>
-                {/* Flat action row — every action is one click. The only dropdown
-                    left is Workflow, whose options are per-document by nature. */}
+                {/* Flat action row — every action is one click. Workflow actions
+                    sit below the fields as buttons of their own. */}
                 <div className="flex shrink-0 items-center gap-1">
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -430,13 +422,19 @@ const DocumentCard = ({
                         </TooltipTrigger>
                         <TooltipContent>{_("Print")}</TooltipContent>
                     </Tooltip>
-                    {workflowDoc && (
-                        <WorkflowMenu doctype={doctype} docname={docname} onApplied={onDocumentChanged} />
-                    )}
                 </div>
             </div>
 
             <DocumentFieldsGrid preview={preview} meta={meta} />
+
+            {workflowDoc && (
+                <DocumentWorkflowActions
+                    doctype={doctype}
+                    docname={docname}
+                    workflowDoc={workflowDoc}
+                    onApplied={onDocumentChanged}
+                />
+            )}
 
             {printOpen && (
                 <DocumentPrintDialog
@@ -661,97 +659,5 @@ const DateValue = ({ text, isDatetime }: { text: string; isDatetime: boolean }) 
             </TooltipTrigger>
             <TooltipContent>{relative}</TooltipContent>
         </Tooltip>
-    )
-}
-
-type WorkflowTransition = {
-    name: string
-    action: string
-    state: string
-    next_state: string
-}
-
-/** The workflow-only dropdown: trigger in the card's action row (rendered only
- *  when the doctype HAS a workflow), transitions as the menu itself. Menu
- *  content mounts on OPEN — that's when the transitions fetch fires, so an
- *  idle card never pays for it. */
-const WorkflowMenu = ({
-    doctype,
-    docname,
-    onApplied,
-}: {
-    doctype: string
-    docname: string
-    onApplied: () => void
-}) => (
-    <DropdownMenu>
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" isIconButton aria-label={_("Workflow")}>
-                        <WorkflowIcon />
-                    </Button>
-                </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent>{_("Workflow")}</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end">
-            <WorkflowTransitions doctype={doctype} docname={docname} onApplied={onApplied} />
-        </DropdownMenuContent>
-    </DropdownMenu>
-)
-
-const WorkflowTransitions = ({
-    doctype,
-    docname,
-    onApplied,
-}: {
-    doctype: string
-    docname: string
-    onApplied: () => void
-}) => {
-    const { call } = useContext(FrappeContext) as FrappeConfig
-    const { data, error, mutate } = useFrappeGetCall<{ message: WorkflowTransition[] }>(
-        "frappe.model.workflow.get_transitions",
-        { doc: { doctype, name: docname } },
-        `workflow_transitions::${doctype}::${docname}`,
-        { revalidateOnFocus: false, shouldRetryOnError: false },
-    )
-
-    const applyTransition = (action: string) => {
-        call
-            .post("frappe.model.workflow.apply_workflow", {
-                doc: { doctype, name: docname },
-                action,
-            })
-            .then(() => {
-                // Both go stale together: the doc's state field and what can happen next.
-                onApplied()
-                mutate()
-                toast.success(_("Workflow updated"))
-            })
-            .catch((e) => errorResponseToast(_("Could not apply workflow action"), e))
-    }
-
-    // A failed fetch (no workflow state on the doc, no read permission) must not
-    // read as an endless "Loading..." — retries are off, so say what happened.
-    if (error) return <DropdownMenuItem disabled>{_("Could not load workflow actions")}</DropdownMenuItem>
-    if (!data) return <DropdownMenuItem disabled>{_("Loading...")}</DropdownMenuItem>
-    if (data.message.length === 0) {
-        return <DropdownMenuItem disabled>{_("No actions available")}</DropdownMenuItem>
-    }
-    return (
-        <>
-            {data.message.map((transition) => (
-                <DropdownMenuItem key={transition.name} onSelect={() => applyTransition(transition.action)}>
-                    <span className="font-medium">{transition.action}</span>
-                    <span className="ml-auto flex items-center gap-1 pl-3 text-p-xs text-ink-gray-5">
-                        {transition.state}
-                        <ArrowRightIcon className="size-3" />
-                        {transition.next_state}
-                    </span>
-                </DropdownMenuItem>
-            ))}
-        </>
     )
 }
